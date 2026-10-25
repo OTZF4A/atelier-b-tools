@@ -7,20 +7,87 @@ if [ "$(ls -A)" ]; then
      exit 1
 fi
 
-# 2. Prompt for the Atelier B 24.04.2 path
-echo "Please enter the installation path for Atelier B 24.04.2:"
-read -r ATELIERB_PATH
+# ---- (semi) automatic detection of location of Atelier B installation
 
-# 3. Check if the input is empty or the path does not exist
-if [ -z "$ATELIERB_PATH" ]; then
-    echo "Error: The path cannot be empty!"
-    exit 1
-fi
+# candidate AtelierB installation directories - detecting based on known parent locations + the presence of etc/AtelierB file that should exist within any Atelier B installation directory
 
-if [ ! -d "$ATELIERB_PATH" ]; then
-    echo "Error: The directory '$ATELIERB_PATH' does not exist."
-    exit 1
-fi
+# according to AtelierB installation documentation at https://www.atelierb.eu/wp-content/uploads/2024/11/installation-guide-community.pdf
+# the AtelierB installation directory can live under the following directory (listed by platform):
+# Linux: /opt/<some atelierb version string>/
+# MacOSX: /Applications/<some atelierb version string>/Contents/Resources/
+# Windows (under git bash): "$PROGRAMFILES"/<some atelierb version string>/
+#
+# we don't know what the current version string is (in fact there might be multiple separate AtelierB installations coexisting), but the directory will have an etc/AtelierB file present
+# so we match to (directories containing) that file, and once the existing file(s) is/are found, we cut off the last two parts of the full file path to arrive at the AtelierB installation directory itself
+#
+DETECTION_FILE_PATH="etc/AtelierB"
+
+# we now use Bash globbing to find out which of these candidates (if any) are actually existing on this machine
+shopt -s nullglob # drop patterns from the list for items that were not found, instead of keeping the unexpanded patterns (= we use this to only keep the existing directories in our list)
+shopt -s nocaseglob # case-insensitive matching
+ATELIERB_GLOBAL_CONFIGURATION_FILE_CANDIDATES=({/opt,/Applications,"$PROGRAMFILES"}/*Atelier*/{Contents/Resources/,}"$DETECTION_FILE_PATH")
+
+# debug: duplicating the entry on my machine, to emulate multiple AtelierB installations, to elicit the directory choice prompt for testing
+#ATELIERB_GLOBAL_CONFIGURATION_FILE_CANDIDATES=({/opt,/Applications,"$PROGRAMFILES","$PROGRAMFILES"}/*Atelier*/{Contents/Resources/,}"$DETECTION_FILE_PATH")
+
+shopt -u nullglob
+shopt -u nocaseglob
+
+shopt -s lastpipe # requesting the last member of the pipe to be run in this shell, so that its results/effects remain visible in this shell
+dirname "${ATELIERB_GLOBAL_CONFIGURATION_FILE_CANDIDATES[@]}" | mapfile -t ATELIERB_GLOBAL_ETC_DIRECTORY_CANDIDATES
+dirname "${ATELIERB_GLOBAL_ETC_DIRECTORY_CANDIDATES[@]}" | mapfile -t ATELIERB_INSTALLATION_DIRECTORY_CANDIDATES
+shopt -u lastpipe
+
+# debug: clear all found
+#unset ATELIERB_INSTALLATION_DIRECTORY_CANDIDATES[@]
+
+until [ -f "$ATELIERB_PATH"/"$DETECTION_FILE_PATH" ]; do
+	OLD_IFS="$IFS"
+	IFS=""
+
+	case ${#ATELIERB_INSTALLATION_DIRECTORY_CANDIDATES[@]} in
+		0)
+			echo Found no Atelier B installations.
+			PROMPT1="Please enter a pathname for the Atelier B you would like to use (or press Ctrl-C to abort): "
+			read -r -p "$PROMPT1"
+			if [ -d "$REPLY" -a -f "${REPLY}"/"$DETECTION_FILE_PATH" ] ; then
+				ATELIERB_PATH="${REPLY}"
+			else
+				echo could not find an Atelier B installation in "$REPLY"
+				echo please try again.
+			fi
+			;;
+		1)
+			ATELIERB_PATH="${ATELIERB_INSTALLATION_DIRECTORY_CANDIDATES[0]}"
+			;;
+		*)
+			PROMPT1="found ${#ATELIERB_INSTALLATION_DIRECTORY_CANDIDATES[@]} Atelier B installation directories, which one would you like to use?"
+			PS3="please enter a number from the list, or input a pathname if you want an Atelier B that is not listed above (or press Ctrl-C to abort): "
+
+			echo "$PROMPT1"
+			select ATELIERB_PATH in "${ATELIERB_INSTALLATION_DIRECTORY_CANDIDATES[@]}";
+			do
+				if [ -n "$ATELIERB_PATH" ] ; then
+					echo You have chosen: "$ATELIERB_PATH"
+					break
+				else
+					echo You entered: $REPLY
+					if [ -d "$REPLY" -a -f '${REPLY}'/"$DETECTION_FILE_PATH" ] ; then
+						ATELIERB_PATH=${REPLY}
+					else
+						echo could not find an Atelier B installation in "$REPLY"
+						echo please try again.
+					fi
+					break
+				fi
+			done
+	esac
+	IFS="$OLD_IFS"
+done
+
+echo Using Atelier B installation in: "$ATELIERB_PATH"
+
+# ---- end of (semi) automatic detection of location of Atelier B installation
 
 # 4. Create the 'bdb' and 'Archives' directories
 mkdir -p "bdb" "Archives"
